@@ -19,29 +19,36 @@ def get_parent_id(tag_id):
         raise ValueError(f"Parent sheep with tag_id '{tag_id}' not found")
     return parent.id
 
-@app.route('/sheep', methods=['POST'])
+@app.route('/sheep', methods=['POST'], strict_slashes=False)
 def add_sheep():
-    # Handle both JSON and form-data
+    print("📝 Received POST /sheep request")
+    print("Content-Type:", request.content_type)
     if request.content_type.startswith('application/json'):
         try:
             data = request.get_json(force=True, silent=False)
             if not data:
+                print("❌ Empty or invalid JSON body")
                 return jsonify({"error": "Invalid or empty JSON"}), 400
         except Exception as e:
+            print("❌ JSON parsing failed:", str(e))
             return jsonify({"error": f"JSON parsing failed: {str(e)}"}), 400
     else:
         data = request.form
+    print("📥 Incoming data:", data)
+    print("📂 Incoming files:", request.files)
 
     # Validate required fields
     required_fields = ['tag_id', 'gender', 'dob']
-    missing = [field for field in required_fields if field not in data]
+    missing = [field for field in required_fields if field not in data or not data[field]]
     if missing:
+        print(f"❌ Missing required fields: {missing}")
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
     # Process date
     try:
         dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
     except ValueError:
+        print("❌ Invalid date format for dob:", data['dob'])
         return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
 
     # Handle parents
@@ -49,6 +56,7 @@ def add_sheep():
         mother_id = get_parent_id(data.get("mother_id")) if data.get("mother_id") else None
         father_id = get_parent_id(data.get("father_id")) if data.get("father_id") else None
     except ValueError as e:
+        print("❌ Parent sheep not found error:", str(e))
         return jsonify({"error": str(e)}), 404
 
     # Handle image upload
@@ -56,9 +64,12 @@ def add_sheep():
     filename = None
     if file:
         if not allowed_file(file.filename):
+            print(f"❌ Invalid image format: {file.filename}")
             return jsonify({"error": "Invalid image format"}), 400
         filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(save_path)
+        print(f"✅ Saved image file to {save_path}")
 
     # Create sheep record
     try:
@@ -78,6 +89,7 @@ def add_sheep():
 
         db.session.add(new_sheep)
         db.session.commit()
+        print(f"✅ Added new sheep with tag_id: {new_sheep.tag_id}")
 
         return jsonify({
             "message": "Sheep added successfully",
@@ -90,9 +102,13 @@ def add_sheep():
 
     except IntegrityError:
         db.session.rollback()
+        print(f"❌ IntegrityError: Tag ID {data['tag_id']} already exists")
         return jsonify({"error": "Tag ID already exists"}), 409
     except Exception as e:
+        db.session.rollback()
+        print("❌ Server error:", str(e))
         return jsonify({"error": f"Server error: {str(e)}"}), 500
+
 
 @app.route('/sheep', methods=['GET'])
 def get_sheep():
@@ -129,34 +145,60 @@ def get_sheep_by_id(sheep_id):
 @app.route('/sheep/<int:sheep_id>', methods=['PUT'])
 def update_sheep(sheep_id):
     sheep = Sheep.query.get_or_404(sheep_id)
-    data = request.get_json() if request.is_json else request.form
 
-    # Handle all updatable fields
-    if 'dob' in data:
-        try:
-            sheep.dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
-        except ValueError:
-            pass
+    print("🔍 Incoming update for Sheep ID:", sheep_id)
+    print("Form:", request.form)
+    print("Files:", request.files)
 
-    sheep.tag_id = data.get('tag_id', sheep.tag_id)
-    sheep.gender = data.get('gender', sheep.gender)
-    sheep.pregnant = str(data.get('pregnant', sheep.pregnant)).lower() == 'true'
-    sheep.medical_records = data.get('medical_records', sheep.medical_records)
-    sheep.weight = float(data['weight']) if 'weight' in data else sheep.weight
-    sheep.breed = data.get('breed', sheep.breed)
-    sheep.is_lamb = str(data.get('is_lamb', sheep.is_lamb)).lower() == 'true'
+    tag_id = request.form.get('tag_id')
+    gender = request.form.get('gender')
+    dob_str = request.form.get('dob')
+    pregnant = request.form.get('pregnant')
+    weight = request.form.get('weight')
+    breed = request.form.get('breed')
+    medical_records = request.form.get('medical_records')
+    mother_id = request.form.get('mother_id')
+    father_id = request.form.get('father_id')
+    is_lamb = request.form.get('is_lamb')
+    file = request.files.get('image')
 
-    # Handle parent relationships
+    # Check required fields
+    if not tag_id or not gender or not dob_str:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    # Convert dob string to Python date object
     try:
-        if 'mother_id' in data:
-            sheep.mother_id = get_parent_id(data['mother_id']) if data['mother_id'] else None
-        if 'father_id' in data:
-            sheep.father_id = get_parent_id(data['father_id']) if data['father_id'] else None
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        dob = datetime.fromisoformat(dob_str).date()
+    except ValueError:
+        return jsonify({'error': 'Invalid date format'}), 400
 
-    db.session.commit()
-    return jsonify({"message": "Sheep updated"})
+    # Update sheep fields
+    sheep.tag_id = tag_id
+    sheep.gender = gender
+    sheep.dob = dob
+    sheep.pregnant = (pregnant.lower() == 'true') if gender.lower() == 'female' and pregnant is not None else None
+    sheep.weight = weight
+    sheep.breed = breed
+    sheep.medical_records = medical_records
+    sheep.mother_id = mother_id
+    sheep.father_id = father_id
+    sheep.is_lamb = is_lamb.lower() == 'true' if is_lamb else False
+
+    if file:
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        sheep.image = filename
+
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Sheep updated successfully'})
+    except Exception as e:
+        db.session.rollback()
+        print("❌ DB Error:", e)
+        return jsonify({'error': str(e)}), 500
+
+
 
 @app.route('/sheep/<int:sheep_id>', methods=['DELETE'])
 def delete_sheep(sheep_id):

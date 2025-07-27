@@ -1,9 +1,9 @@
-from flask import Blueprint, request, jsonify, url_for
+from flask import Blueprint, request, jsonify, url_for, abort
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
 from . import db, app
-from .models import Sheep
+from .models import Lamb, Sheep
 from .config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
@@ -46,8 +46,10 @@ def get_all_lambs():
         'mother_id': lamb.mother.tag_id if lamb.mother else None,
         'father_id': lamb.father.tag_id if lamb.father else None,
         'weight': lamb.weight,
-        'breed': lamb.breed
+        'breed': lamb.breed,
+        'notes': lamb.medical_records  
     } for lamb in lambs])
+
 
 @lamb_bp.route('/lambs/<int:lamb_id>', methods=['GET'])
 def get_lamb_by_id(lamb_id):
@@ -137,10 +139,17 @@ def add_lamb():
         return jsonify({
             "message": "Lamb added successfully",
             "data": {
+                "id": new_lamb.id,
                 "tag_id": new_lamb.tag_id,
                 "dob": new_lamb.dob.isoformat(),
-                "mother_id": data.get("mother_id"),
-                "father_id": data.get("father_id")
+                "gender": new_lamb.gender,
+                "mother_id": new_lamb.mother.tag_id if new_lamb.mother else None,
+                "father_id": new_lamb.father.tag_id if new_lamb.father else None,
+                "notes": new_lamb.medical_records,
+                "image_url": url_for('uploaded_file', filename=new_lamb.image, _external=True) if new_lamb.image else None,
+                "weight": new_lamb.weight,
+                "breed": new_lamb.breed,
+                "is_lamb": new_lamb.is_lamb
             }
         }), 201
 
@@ -157,31 +166,47 @@ def update_lamb(lamb_id):
     if not lamb.is_lamb:
         return jsonify({"error": "Not a lamb"}), 400
 
-    data = request.get_json() if request.is_json else request.form
+    data = request.form if request.form else request.get_json()
+    print("Incoming lamb update:", data)
+
+    # Update basic fields
+    lamb.tag_id = data.get('tag_id', lamb.tag_id)
+    lamb.weight = float(data['weight']) if 'weight' in data else lamb.weight
+    lamb.medical_records = data.get('medical_records', lamb.medical_records)
 
     if 'dob' in data:
         try:
             lamb.dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
         except ValueError:
-            pass
+            print("Invalid date format for DOB")
 
-    lamb.tag_id = data.get('tag_id', lamb.tag_id)
-    lamb.weight = float(data['weight']) if 'weight' in data else lamb.weight
-    lamb.medical_records = data.get('medical_records', lamb.medical_records)
-
+    # Update parent references
     if 'mother_id' in data:
-        mother_id = resolve_parent_id(data['mother_id'])
+        mother_tag = data['mother_id']
+        mother_id = resolve_parent_id(mother_tag)
         if mother_id is None:
-            return jsonify({"error": f"Mother sheep with tag_id '{data['mother_id']}' not found"}), 404
+            return jsonify({"error": f"Mother sheep with tag_id '{mother_tag}' not found"}), 404
         lamb.mother_id = mother_id
 
     if 'father_id' in data:
-        father_id = resolve_parent_id(data['father_id'])
+        father_tag = data['father_id']
+        father_id = resolve_parent_id(father_tag)
         if father_id is None:
-            return jsonify({"error": f"Father sheep with tag_id '{data['father_id']}' not found"}), 404
+            return jsonify({"error": f"Father sheep with tag_id '{father_tag}' not found"}), 404
         lamb.father_id = father_id
 
+    # Optional: handle image update
+    if 'image' in request.files:
+        image_file = request.files['image']
+        if image_file:
+            filename = secure_filename(image_file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            image_file.save(filepath)
+            lamb.image = filename
+            print(f"Image updated: {filename}")
+
     db.session.commit()
+    print(f"Lamb updated: {lamb.tag_id}, mother_id={lamb.mother_id}, father_id={lamb.father_id}")
     return jsonify({"message": "Lamb updated"})
 
 @lamb_bp.route('/lambs/<int:lamb_id>', methods=['DELETE'])
@@ -193,3 +218,28 @@ def delete_lamb(lamb_id):
     db.session.delete(lamb)
     db.session.commit()
     return jsonify({"message": f"Lamb {lamb.tag_id} deleted"})
+
+@lamb_bp.route('/lambs/by-parent/<string:parent_tag_id>', methods=['GET'])
+def get_lambs_by_parent(parent_tag_id):
+    # Normalize tag_id case
+    parent = Sheep.query.filter(func.lower(Sheep.tag_id) == func.lower(parent_tag_id)).first()
+    if not parent:
+        return jsonify({"error": "Parent sheep not found"}), 404
+
+    # Get all lambs with this parent as mother or father
+    lambs = Sheep.query.filter(
+        Sheep.is_lamb == True,
+        ((Sheep.mother_id == parent.id) | (Sheep.father_id == parent.id))
+    ).all()
+
+    return jsonify([{
+        'id': lamb.id,
+        'tag_id': lamb.tag_id,
+        'dob': lamb.dob.isoformat() if lamb.dob else None,
+        'gender': lamb.gender,
+        'image_url': url_for('uploaded_file', filename=lamb.image, _external=True) if lamb.image else None,
+        'weight': lamb.weight,
+        'breed': lamb.breed,
+        'mother_id': lamb.mother.tag_id if lamb.mother else None,
+        'father_id': lamb.father.tag_id if lamb.father else None,
+    } for lamb in lambs])

@@ -36,3 +36,13 @@ app.register_blueprint(lamb_bp)    # ✅ Register lamb routes (no prefix)
 @app.route('/health')
 def health_check():
     return {'status': 'healthy', 'database': app.config['SQLALCHEMY_DATABASE_URI']}
+
+# 🔧 Temporary route to run migrations manually
+@app.route('/run-migrations')
+def run_migrations():
+    from flask_migrate import upgrade
+    try:
+        upgrade()
+        return {'status': 'success', 'message': 'Database migrated successfully'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}

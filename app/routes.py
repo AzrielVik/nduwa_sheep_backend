@@ -1,4 +1,4 @@
-from flask import request, jsonify, url_for
+from flask import request, jsonify
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
@@ -27,7 +27,9 @@ def upload_to_cloudinary(file):
             data={'upload_preset': CLOUDINARY_UPLOAD_PRESET}
         )
         result = response.json()
-        return result.get('secure_url')
+        if 'secure_url' not in result:
+            raise ValueError(f"Missing secure_url in response: {result}")
+        return result['secure_url']
     except Exception as e:
         print("❌ Cloudinary upload failed:", str(e))
         return None
@@ -36,44 +38,31 @@ def upload_to_cloudinary(file):
 def add_sheep():
     print("📝 Received POST /sheep request")
     print("Content-Type:", request.content_type)
-    if request.content_type.startswith('application/json'):
-        try:
-            data = request.get_json(force=True, silent=False)
-            if not data:
-                print("❌ Empty or invalid JSON body")
-                return jsonify({"error": "Invalid or empty JSON"}), 400
-        except Exception as e:
-            print("❌ JSON parsing failed:", str(e))
-            return jsonify({"error": f"JSON parsing failed: {str(e)}"}), 400
-    else:
-        data = request.form
+
+    data = request.get_json(force=True, silent=True) if request.content_type.startswith('application/json') else request.form
     print("📥 Incoming data:", data)
     print("📂 Incoming files:", request.files)
 
     required_fields = ['tag_id', 'gender', 'dob']
-    missing = [field for field in required_fields if field not in data or not data[field]]
+    missing = [field for field in required_fields if not data.get(field)]
     if missing:
-        print(f"❌ Missing required fields: {missing}")
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
     try:
         dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
     except ValueError:
-        print("❌ Invalid date format for dob:", data['dob'])
         return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
 
     try:
         mother_id = get_parent_id(data.get("mother_id")) if data.get("mother_id") else None
         father_id = get_parent_id(data.get("father_id")) if data.get("father_id") else None
     except ValueError as e:
-        print("❌ Parent sheep not found error:", str(e))
         return jsonify({"error": str(e)}), 404
 
     file = request.files.get('image')
     image_url = None
     if file:
         if not allowed_file(file.filename):
-            print(f"❌ Invalid image format: {file.filename}")
             return jsonify({"error": "Invalid image format"}), 400
         image_url = upload_to_cloudinary(file)
 
@@ -101,17 +90,15 @@ def add_sheep():
             "data": {
                 "tag_id": new_sheep.tag_id,
                 "dob": new_sheep.dob.isoformat(),
-                "image_url": image_url
+                "image_url": new_sheep.image
             }
         }), 201
 
     except IntegrityError:
         db.session.rollback()
-        print(f"❌ IntegrityError: Tag ID {data['tag_id']} already exists")
         return jsonify({"error": "Tag ID already exists"}), 409
     except Exception as e:
         db.session.rollback()
-        print("❌ Server error:", str(e))
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 @app.route('/sheep', methods=['GET'])
@@ -149,52 +136,33 @@ def get_sheep_by_id(sheep_id):
 @app.route('/sheep/<int:sheep_id>', methods=['PUT'])
 def update_sheep(sheep_id):
     sheep = Sheep.query.get_or_404(sheep_id)
-
-    print("🔍 Incoming update for Sheep ID:", sheep_id)
-    print("Form:", request.form)
-    print("Files:", request.files)
-
-    tag_id = request.form.get('tag_id')
-    gender = request.form.get('gender')
-    dob_str = request.form.get('dob')
-    pregnant = request.form.get('pregnant')
-    weight = request.form.get('weight')
-    breed = request.form.get('breed')
-    medical_records = request.form.get('medical_records')
-    mother_id = request.form.get('mother_id')
-    father_id = request.form.get('father_id')
-    is_lamb = request.form.get('is_lamb')
+    data = request.form
     file = request.files.get('image')
 
-    if not tag_id or not gender or not dob_str:
-        return jsonify({'error': 'Missing required fields'}), 400
+    print("🔄 Updating Sheep ID:", sheep_id)
+    print("📝 Form data:", data)
 
     try:
-        dob = datetime.fromisoformat(dob_str).date()
-    except ValueError:
-        return jsonify({'error': 'Invalid date format'}), 400
+        sheep.tag_id = data['tag_id']
+        sheep.gender = data['gender']
+        sheep.dob = datetime.fromisoformat(data['dob']).date()
+        sheep.pregnant = (data.get('pregnant', 'false').lower() == 'true') if sheep.gender.lower() == 'female' else None
+        sheep.weight = float(data['weight']) if data.get('weight') else None
+        sheep.breed = data.get('breed')
+        sheep.medical_records = data.get('medical_records')
+        sheep.mother_id = get_parent_id(data['mother_id']) if data.get('mother_id') else None
+        sheep.father_id = get_parent_id(data['father_id']) if data.get('father_id') else None
+        sheep.is_lamb = data.get('is_lamb', 'false').lower() == 'true'
 
-    sheep.tag_id = tag_id
-    sheep.gender = gender
-    sheep.dob = dob
-    sheep.pregnant = (pregnant.lower() == 'true') if gender.lower() == 'female' and pregnant is not None else None
-    sheep.weight = weight
-    sheep.breed = breed
-    sheep.medical_records = medical_records
-    sheep.mother_id = mother_id
-    sheep.father_id = father_id
-    sheep.is_lamb = is_lamb.lower() == 'true' if is_lamb else False
+        if file:
+            if not allowed_file(file.filename):
+                return jsonify({"error": "Invalid image format"}), 400
+            sheep.image = upload_to_cloudinary(file)
 
-    if file:
-        image_url = upload_to_cloudinary(file)
-        sheep.image = image_url
-
-    try:
         db.session.commit()
         return jsonify({'message': 'Sheep updated successfully'})
     except Exception as e:
         db.session.rollback()
-        print("❌ DB Error:", e)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/sheep/<int:sheep_id>', methods=['DELETE'])

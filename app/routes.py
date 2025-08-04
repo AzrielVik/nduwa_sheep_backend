@@ -192,12 +192,12 @@ def get_offspring_by_tag(tag_id):
     if not parent:
         return jsonify({"error": "Parent sheep not found"}), 404
 
-    # Sheep children (as before)
+    # Sheep children (those who reference this parent.id)
     sheep_children = parent.mother_children + parent.father_children
 
-    # Lamb children — new addition
+    # Lambs use tag_id not id
     lamb_children = Lamb.query.filter(
-        (Lamb.mother_id == parent.id) | (Lamb.father_id == parent.id)
+        (Lamb.mother_tag_id == tag_id) | (Lamb.father_tag_id == tag_id)
     ).all()
 
     return jsonify({
@@ -226,4 +226,6 @@ def get_offspring_by_tag(tag_id):
             'father_id': lamb.father.tag_id if lamb.father else None
         } for lamb in lamb_children]
     })
+
+
 

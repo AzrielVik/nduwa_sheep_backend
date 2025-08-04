@@ -157,8 +157,14 @@ def update_sheep(sheep_id):
         sheep.weight = float(data['weight']) if data.get('weight') else None
         sheep.breed = data.get('breed')
         sheep.medical_records = data.get('medical_records')
-        sheep.mother_id = get_parent_id(data['mother_id']) if data.get('mother_id') else None
-        sheep.father_id = get_parent_id(data['father_id']) if data.get('father_id') else None
+
+        # Wrap these in try-except to catch missing parent tag_id
+        try:
+            sheep.mother_id = get_parent_id(data['mother_id']) if data.get('mother_id') else None
+            sheep.father_id = get_parent_id(data['father_id']) if data.get('father_id') else None
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+
         sheep.is_lamb = data.get('is_lamb', 'false').lower() == 'true'
 
         image_url = data.get('image_url')
@@ -167,9 +173,11 @@ def update_sheep(sheep_id):
 
         db.session.commit()
         return jsonify({'message': 'Sheep updated successfully'})
+
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
 
 # ────────────────────────────────────────────────────────────
 @app.route('/sheep/<int:sheep_id>', methods=['DELETE'])

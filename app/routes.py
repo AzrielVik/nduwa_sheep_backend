@@ -1,7 +1,7 @@
 from flask import request, jsonify
 from datetime import datetime
 from . import app, db
-from .models import Sheep
+from .models import Sheep, Lamb
 from sqlalchemy.exc import IntegrityError
 
 # ────────────────────────────────────────────────────────────
@@ -184,25 +184,46 @@ def delete_sheep(sheep_id):
 def resource_not_found(e):
     return jsonify({"error": "Resource not found"}), 404
 
+from .models import Sheep, Lamb
+
 @app.route('/sheep/offspring/<string:tag_id>', methods=['GET'])
 def get_offspring_by_tag(tag_id):
     parent = Sheep.query.filter_by(tag_id=tag_id).first()
     if not parent:
         return jsonify({"error": "Parent sheep not found"}), 404
 
-    children = parent.mother_children + parent.father_children
+    # Sheep children (as before)
+    sheep_children = parent.mother_children + parent.father_children
 
-    return jsonify([{
-        'id': child.id,
-        'tag_id': child.tag_id,
-        'dob': child.dob.isoformat() if child.dob else None,
-        'gender': child.gender,
-        'pregnant': child.pregnant,
-        'medical_records': child.medical_records,
-        'image': child.image,
-        'weight': child.weight,
-        'breed': child.breed,
-        'mother_id': child.mother.tag_id if child.mother else None,
-        'father_id': child.father.tag_id if child.father else None,
-        'is_lamb': child.is_lamb
-    } for child in children])
+    # Lamb children — new addition
+    lamb_children = Lamb.query.filter(
+        (Lamb.mother_id == parent.id) | (Lamb.father_id == parent.id)
+    ).all()
+
+    return jsonify({
+        "sheep_children": [{
+            'id': child.id,
+            'tag_id': child.tag_id,
+            'dob': child.dob.isoformat() if child.dob else None,
+            'gender': child.gender,
+            'pregnant': child.pregnant,
+            'medical_records': child.medical_records,
+            'image': child.image,
+            'weight': child.weight,
+            'breed': child.breed,
+            'mother_id': child.mother.tag_id if child.mother else None,
+            'father_id': child.father.tag_id if child.father else None,
+            'is_lamb': child.is_lamb
+        } for child in sheep_children],
+        
+        "lamb_children": [{
+            'id': lamb.id,
+            'tag_id': lamb.tag_id,
+            'dob': lamb.dob.isoformat() if lamb.dob else None,
+            'gender': lamb.gender,
+            'image': lamb.image,
+            'mother_id': lamb.mother.tag_id if lamb.mother else None,
+            'father_id': lamb.father.tag_id if lamb.father else None
+        } for lamb in lamb_children]
+    })
+

@@ -183,3 +183,26 @@ def delete_sheep(sheep_id):
 @app.errorhandler(404)
 def resource_not_found(e):
     return jsonify({"error": "Resource not found"}), 404
+
+@app.route('/sheep/offspring/<string:tag_id>', methods=['GET'])
+def get_offspring_by_tag(tag_id):
+    parent = Sheep.query.filter_by(tag_id=tag_id).first()
+    if not parent:
+        return jsonify({"error": "Parent sheep not found"}), 404
+
+    children = parent.mother_children + parent.father_children
+
+    return jsonify([{
+        'id': child.id,
+        'tag_id': child.tag_id,
+        'dob': child.dob.isoformat() if child.dob else None,
+        'gender': child.gender,
+        'pregnant': child.pregnant,
+        'medical_records': child.medical_records,
+        'image': child.image,
+        'weight': child.weight,
+        'breed': child.breed,
+        'mother_id': child.mother.tag_id if child.mother else None,
+        'father_id': child.father.tag_id if child.father else None,
+        'is_lamb': child.is_lamb
+    } for child in children])

@@ -5,6 +5,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from dotenv import load_dotenv
 from .config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS
+from sqlalchemy import event
+from sqlalchemy.exc import DisconnectionError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,6 +28,17 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Initialize extensions
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
+
+# ✅ Add this to prevent idle connection timeouts (Neon/PostgreSQL fix)
+@event.listens_for(db.engine, "engine_connect")
+def ping_connection(connection, branch):
+    if branch:
+        return
+    try:
+        connection.scalar("SELECT 1")
+    except DisconnectionError:
+        connection.invalidate()
+        connection.scalar("SELECT 1")
 
 # Import and register routes
 from . import routes

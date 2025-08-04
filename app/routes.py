@@ -1,16 +1,10 @@
 from flask import request, jsonify
-from werkzeug.utils import secure_filename
-import os
 from datetime import datetime
-from .config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, CLOUDINARY_UPLOAD_URL, CLOUDINARY_UPLOAD_PRESET
 from . import app, db
 from .models import Sheep
 from sqlalchemy.exc import IntegrityError
-import requests
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
+# ────────────────────────────────────────────────────────────
 def get_parent_id(tag_id):
     if not tag_id:
         return None
@@ -19,29 +13,15 @@ def get_parent_id(tag_id):
         raise ValueError(f"Parent sheep with tag_id '{tag_id}' not found")
     return parent.id
 
-def upload_to_cloudinary(file):
-    try:
-        response = requests.post(
-            CLOUDINARY_UPLOAD_URL,
-            files={'file': file},
-            data={'upload_preset': CLOUDINARY_UPLOAD_PRESET}
-        )
-        result = response.json()
-        if 'secure_url' not in result:
-            raise ValueError(f"Missing secure_url in Cloudinary response: {result}")
-        return result['secure_url']
-    except Exception as e:
-        print("❌ Cloudinary upload failed:", str(e))
-        return None
-
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep', methods=['POST'], strict_slashes=False)
 def add_sheep():
     print("📝 Received POST /sheep request")
-    print("Content-Type:", request.content_type)
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
 
-    data = request.get_json(force=True, silent=True) if request.content_type.startswith('application/json') else request.form
+    data = request.get_json()
     print("📥 Incoming data:", data)
-    print("📂 Incoming files:", request.files)
 
     required_fields = ['tag_id', 'gender', 'dob']
     missing = [field for field in required_fields if not data.get(field)]
@@ -59,12 +39,7 @@ def add_sheep():
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
-    file = request.files.get('image')
-    image_url = None
-    if file:
-        if not allowed_file(file.filename):
-            return jsonify({"error": "Invalid image format"}), 400
-        image_url = upload_to_cloudinary(file)
+    image_url = data.get('image_url')  # Expect frontend to send this
 
     try:
         new_sheep = Sheep(
@@ -101,6 +76,7 @@ def add_sheep():
         db.session.rollback()
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep', methods=['GET'])
 def get_sheep():
     sheep_list = Sheep.query.all()
@@ -119,6 +95,7 @@ def get_sheep():
         'is_lamb': sheep.is_lamb
     } for sheep in sheep_list])
 
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep/<int:sheep_id>', methods=['GET'])
 def get_sheep_by_id(sheep_id):
     sheep = Sheep.query.get_or_404(sheep_id)
@@ -139,6 +116,7 @@ def get_sheep_by_id(sheep_id):
         }
     })
 
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep/by_tag/<string:tag_id>', methods=['GET'])
 def get_sheep_by_tag_id(tag_id):
     sheep = Sheep.query.filter_by(tag_id=tag_id).first()
@@ -159,19 +137,22 @@ def get_sheep_by_tag_id(tag_id):
         "father_id": sheep.father.tag_id if sheep.father else None,
     })
 
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep/<int:sheep_id>', methods=['PUT'])
 def update_sheep(sheep_id):
     sheep = Sheep.query.get_or_404(sheep_id)
-    data = request.form
-    file = request.files.get('image')
 
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+
+    data = request.get_json()
     print("🔄 Updating Sheep ID:", sheep_id)
-    print("📝 Form data:", data)
+    print("📝 Incoming JSON data:", data)
 
     try:
         sheep.tag_id = data['tag_id']
         sheep.gender = data['gender']
-        sheep.dob = datetime.fromisoformat(data['dob']).date()
+        sheep.dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
         sheep.pregnant = (data.get('pregnant', 'false').lower() == 'true') if sheep.gender.lower() == 'female' else None
         sheep.weight = float(data['weight']) if data.get('weight') else None
         sheep.breed = data.get('breed')
@@ -180,12 +161,9 @@ def update_sheep(sheep_id):
         sheep.father_id = get_parent_id(data['father_id']) if data.get('father_id') else None
         sheep.is_lamb = data.get('is_lamb', 'false').lower() == 'true'
 
-        if file:
-            if not allowed_file(file.filename):
-                return jsonify({"error": "Invalid image format"}), 400
-            cloud_url = upload_to_cloudinary(file)
-            if cloud_url:
-                sheep.image = cloud_url
+        image_url = data.get('image_url')
+        if image_url is not None:
+            sheep.image = image_url
 
         db.session.commit()
         return jsonify({'message': 'Sheep updated successfully'})
@@ -193,6 +171,7 @@ def update_sheep(sheep_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+# ────────────────────────────────────────────────────────────
 @app.route('/sheep/<int:sheep_id>', methods=['DELETE'])
 def delete_sheep(sheep_id):
     sheep = Sheep.query.get_or_404(sheep_id)
@@ -200,6 +179,7 @@ def delete_sheep(sheep_id):
     db.session.commit()
     return jsonify({"message": f"Sheep {sheep.tag_id} deleted"})
 
+# ────────────────────────────────────────────────────────────
 @app.errorhandler(404)
 def resource_not_found(e):
     return jsonify({"error": "Resource not found"}), 404

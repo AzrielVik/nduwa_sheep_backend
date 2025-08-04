@@ -28,7 +28,7 @@ def upload_to_cloudinary(file):
         )
         result = response.json()
         if 'secure_url' not in result:
-            raise ValueError(f"Missing secure_url in response: {result}")
+            raise ValueError(f"Missing secure_url in Cloudinary response: {result}")
         return result['secure_url']
     except Exception as e:
         print("❌ Cloudinary upload failed:", str(e))
@@ -126,11 +126,37 @@ def get_sheep_by_id(sheep_id):
         "tag_id": sheep.tag_id,
         "dob": sheep.dob.isoformat() if sheep.dob else None,
         "gender": sheep.gender,
+        "image": sheep.image,
+        "pregnant": sheep.pregnant,
+        "weight": sheep.weight,
+        "breed": sheep.breed,
+        "medical_records": sheep.medical_records,
+        "is_lamb": sheep.is_lamb,
+        "mother_id": sheep.mother.tag_id if sheep.mother else None,
+        "father_id": sheep.father.tag_id if sheep.father else None,
         "family": {
-            "mother": sheep.mother.tag_id if sheep.mother else None,
-            "father": sheep.father.tag_id if sheep.father else None,
             "children": [lamb.tag_id for lamb in sheep.mother_children + sheep.father_children]
         }
+    })
+
+@app.route('/sheep/by_tag/<string:tag_id>', methods=['GET'])
+def get_sheep_by_tag_id(tag_id):
+    sheep = Sheep.query.filter_by(tag_id=tag_id).first()
+    if not sheep:
+        return jsonify({'error': 'Sheep not found'}), 404
+    return jsonify({
+        "id": sheep.id,
+        "tag_id": sheep.tag_id,
+        "dob": sheep.dob.isoformat() if sheep.dob else None,
+        "gender": sheep.gender,
+        "image": sheep.image,
+        "pregnant": sheep.pregnant,
+        "weight": sheep.weight,
+        "breed": sheep.breed,
+        "medical_records": sheep.medical_records,
+        "is_lamb": sheep.is_lamb,
+        "mother_id": sheep.mother.tag_id if sheep.mother else None,
+        "father_id": sheep.father.tag_id if sheep.father else None,
     })
 
 @app.route('/sheep/<int:sheep_id>', methods=['PUT'])
@@ -157,7 +183,9 @@ def update_sheep(sheep_id):
         if file:
             if not allowed_file(file.filename):
                 return jsonify({"error": "Invalid image format"}), 400
-            sheep.image = upload_to_cloudinary(file)
+            cloud_url = upload_to_cloudinary(file)
+            if cloud_url:
+                sheep.image = cloud_url
 
         db.session.commit()
         return jsonify({'message': 'Sheep updated successfully'})

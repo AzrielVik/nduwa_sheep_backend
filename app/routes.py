@@ -1,5 +1,6 @@
 from flask import request, jsonify
 from datetime import datetime
+from dateutil.parser import parse as parse_date  # NEW
 from . import app, db
 from .models import Sheep, Lamb
 from sqlalchemy.exc import IntegrityError
@@ -29,9 +30,9 @@ def add_sheep():
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
     try:
-        dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
+        dob = parse_date(data['dob']).date()  # UPDATED
     except ValueError:
-        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        return jsonify({"error": "Invalid date format"}), 400
 
     try:
         mother_id = get_parent_id(data.get("mother_id")) if data.get("mother_id") else None
@@ -39,21 +40,21 @@ def add_sheep():
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
-    image_url = data.get('image_url')  # Expect frontend to send this
+    image_url = data.get('image_url')
 
     try:
         new_sheep = Sheep(
             tag_id=data["tag_id"],
             dob=dob,
             gender=data["gender"],
-            pregnant=str(data.get("pregnant", "false")).lower() == "true",
+            pregnant=bool(data.get("pregnant")) if data["gender"].lower() == "female" else None,  # UPDATED
             medical_records=data.get("medical_records", ""),
             image=image_url,
             weight=float(data['weight']) if data.get('weight') else None,
             breed=data.get("breed"),
             mother_id=mother_id,
             father_id=father_id,
-            is_lamb=str(data.get("is_lamb", "false")).lower() == "true"
+            is_lamb=bool(data.get("is_lamb", False))
         )
 
         db.session.add(new_sheep)
@@ -152,20 +153,21 @@ def update_sheep(sheep_id):
     try:
         sheep.tag_id = data['tag_id']
         sheep.gender = data['gender']
-        sheep.dob = datetime.strptime(data['dob'], "%Y-%m-%d").date()
-        sheep.pregnant = (data.get('pregnant', 'false').lower() == 'true') if sheep.gender.lower() == 'female' else None
+        sheep.dob = parse_date(data['dob']).date()  # UPDATED
+        sheep.pregnant = (
+            bool(data.get('pregnant')) if sheep.gender.lower() == 'female' else None
+        )  # FIXED
         sheep.weight = float(data['weight']) if data.get('weight') else None
         sheep.breed = data.get('breed')
         sheep.medical_records = data.get('medical_records')
 
-        # Wrap these in try-except to catch missing parent tag_id
         try:
             sheep.mother_id = get_parent_id(data['mother_id']) if data.get('mother_id') else None
             sheep.father_id = get_parent_id(data['father_id']) if data.get('father_id') else None
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
 
-        sheep.is_lamb = data.get('is_lamb', 'false').lower() == 'true'
+        sheep.is_lamb = bool(data.get('is_lamb', False))  # FIXED
 
         image_url = data.get('image_url')
         if image_url is not None:
@@ -177,7 +179,6 @@ def update_sheep(sheep_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 # ────────────────────────────────────────────────────────────
 @app.route('/sheep/<int:sheep_id>', methods=['DELETE'])
@@ -192,18 +193,13 @@ def delete_sheep(sheep_id):
 def resource_not_found(e):
     return jsonify({"error": "Resource not found"}), 404
 
-from .models import Sheep, Lamb
-
 @app.route('/sheep/offspring/<string:tag_id>', methods=['GET'])
 def get_offspring_by_tag(tag_id):
     parent = Sheep.query.filter_by(tag_id=tag_id).first()
     if not parent:
         return jsonify({"error": "Parent sheep not found"}), 404
 
-    # Sheep children (those who reference this parent.id)
     sheep_children = parent.mother_children + parent.father_children
-
-    # Lambs use tag_id not id
     lamb_children = Lamb.query.filter(
         (Lamb.mother_tag_id == tag_id) | (Lamb.father_tag_id == tag_id)
     ).all()
@@ -223,7 +219,7 @@ def get_offspring_by_tag(tag_id):
             'father_id': child.father.tag_id if child.father else None,
             'is_lamb': child.is_lamb
         } for child in sheep_children],
-        
+
         "lamb_children": [{
             'id': lamb.id,
             'tag_id': lamb.tag_id,
@@ -234,6 +230,3 @@ def get_offspring_by_tag(tag_id):
             'father_id': lamb.father.tag_id if lamb.father else None
         } for lamb in lamb_children]
     })
-
-
-

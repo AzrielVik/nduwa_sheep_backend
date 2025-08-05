@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, url_for
+from flask import Blueprint, request, jsonify
 from datetime import datetime
 from . import db
 from .models import Lamb, Sheep
@@ -37,8 +37,9 @@ def get_all_lambs():
         'mother_id': lamb.mother.tag_id if lamb.mother else None,
         'father_id': lamb.father.tag_id if lamb.father else None,
         'weight': lamb.weight,
+        'weaning_weight': lamb.weaning_weight,
         'breed': lamb.breed,
-        'notes': lamb.medical_records  
+        'notes': lamb.medical_records
     } for lamb in lambs])
 
 @lamb_bp.route('/lambs/<int:lamb_id>', methods=['GET'])
@@ -56,7 +57,10 @@ def get_lamb_by_id(lamb_id):
             'siblings': [sib.tag_id for sib in lamb.mother_children + lamb.father_children if sib.id != lamb.id]
         },
         'medical_records': lamb.medical_records,
-        'image_url': lamb.image if lamb.image else None
+        'image_url': lamb.image if lamb.image else None,
+        'weight': lamb.weight,
+        'weaning_weight': lamb.weaning_weight,
+        'breed': lamb.breed
     })
 
 @lamb_bp.route('/lambs', methods=['POST'])
@@ -86,9 +90,10 @@ def add_lamb():
             dob=dob,
             gender=data["gender"],
             weight=float(data['weight']) if data.get('weight') else None,
+            weaning_weight=float(data['weaning_weight']) if data.get('weaning_weight') else None,
             breed=data.get("breed"),
             medical_records=data.get("medical_records", ""),
-            image=data.get("image"),  # image URL from frontend
+            image=data.get("image_url"),
             mother_id=mother_id,
             father_id=father_id,
             is_lamb=True
@@ -108,6 +113,7 @@ def add_lamb():
                 "notes": new_lamb.medical_records,
                 "image_url": new_lamb.image,
                 "weight": new_lamb.weight,
+                "weaning_weight": new_lamb.weaning_weight,
                 "breed": new_lamb.breed,
                 "is_lamb": new_lamb.is_lamb
             }
@@ -131,6 +137,7 @@ def update_lamb(lamb_id):
 
     lamb.tag_id = data.get('tag_id', lamb.tag_id)
     lamb.weight = float(data['weight']) if 'weight' in data else lamb.weight
+    lamb.weaning_weight = float(data['weaning_weight']) if 'weaning_weight' in data else lamb.weaning_weight
     lamb.medical_records = data.get('medical_records', lamb.medical_records)
 
     if 'dob' in data:
@@ -151,8 +158,8 @@ def update_lamb(lamb_id):
             return jsonify({"error": f"Father sheep with tag_id '{data['father_id']}' not found"}), 404
         lamb.father_id = father_id
 
-    if 'image' in data:
-        lamb.image = data['image']  # image URL from frontend
+    if 'image_url' in data:
+        lamb.image = data['image_url']
 
     db.session.commit()
     print(f"Lamb updated: {lamb.tag_id}, mother_id={lamb.mother_id}, father_id={lamb.father_id}")
@@ -186,6 +193,7 @@ def get_lambs_by_parent(parent_tag_id):
         'gender': lamb.gender,
         'image_url': lamb.image if lamb.image else None,
         'weight': lamb.weight,
+        'weaning_weight': lamb.weaning_weight,
         'breed': lamb.breed,
         'mother_id': lamb.mother.tag_id if lamb.mother else None,
         'father_id': lamb.father.tag_id if lamb.father else None,

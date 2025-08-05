@@ -15,6 +15,7 @@ class Sheep(db.Model):
     weight = db.Column(db.Float)
     breed = db.Column(db.String(50))
     is_lamb = db.Column(db.Boolean, default=False)
+    weaning_weight = db.Column(db.Float, nullable=True)  # <-- Added this line
 
     # Parent relationships (using sheep.id as foreign key)
     mother_id = db.Column(db.Integer, db.ForeignKey('sheep.id'), nullable=True)
@@ -55,6 +56,8 @@ class Lamb(db.Model):
     date_added = db.Column(db.DateTime, default=datetime.utcnow)
     notes = db.Column(db.Text)
     image = db.Column(db.String(200))
+    
+    weaning_weight = db.Column(db.Float)
 
     # Parent relationships (using sheep.tag_id for easy reference)
     mother_tag_id = db.Column(db.String(50), db.ForeignKey('sheep.tag_id'))

@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from . import db
-from .models import Lamb, Sheep
+from .models import Sheep  # Lamb model not used here since lambs are stored in Sheep with is_lamb=True
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 
